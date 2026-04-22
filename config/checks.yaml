@@ -184,55 +184,50 @@ checks:
   #     failure_message: Message d'erreur si la condition échoue
 
   # Endpoint Budget: GET /api/ib/connections/{id}/status
-  # Retourne: { authenticated: bool, connected: bool, account_accessible: bool }
+  # Retourne: { authenticated: bool, connected: bool, ... }
   # Voir Budget/app/backend/main.py:1796 et ib_client.py:64 (check_status)
   #
-  # Les {id} sont les conn_id dans la table ib_connections de Budget.
-  # Pour lister les connexions existantes: GET /api/ib/connections/all
-  # Ajustez les URL ci-dessous selon vos IDs réels (1 = Paper, 2 = GBG).
+  # On ne teste que les 2 gateways IBeam — pas les comptes individuels.
+  # Pour chaque gateway, on pique une conn_id représentative qui l'utilise:
+  #   - ibeam:5000      → conn_id=4 (CELI, ibeam)
+  #   - ibeamgbg:5000   → conn_id=8 (IBKRGBG, ibeamgbg)
+  # Si la gateway est authenticated+connected, le reste des comptes qui passent
+  # par la même gateway suivent. account_accessible n'est pas vérifié.
 
-  - name: "IBeam Gateway (Paper)"
+  - name: "IBeam Gateway (ibeam:5000)"
     type: api_custom
-    url: "http://budget:8001/api/ib/connections/1/status"
+    url: "http://budget:8001/api/ib/connections/4/status"
     interval: 120
     timeout: 15
     validations:
       - field: "authenticated"
         operator: "eq"
         value: true
-        failure_message: "IBeam Paper non authentifié"
+        failure_message: "Gateway ibeam:5000 non authentifiée"
       - field: "connected"
         operator: "eq"
         value: true
-        failure_message: "IBeam Paper déconnecté du broker"
-      - field: "account_accessible"
-        operator: "eq"
-        value: true
-        failure_message: "IBeam Paper: compte inaccessible"
+        failure_message: "Gateway ibeam:5000 déconnectée du broker"
     headers:
       X-Internal-Key: "${INTERNAL_API_KEY}"
     alerting:
       consecutive_failures_before_alert: 2
       channels: [ntfy, email]
 
-  - name: "IBeam Gateway GBG"
+  - name: "IBeam Gateway GBG (ibeamgbg:5000)"
     type: api_custom
-    url: "http://budget:8001/api/ib/connections/2/status"
+    url: "http://budget:8001/api/ib/connections/8/status"
     interval: 120
     timeout: 15
     validations:
       - field: "authenticated"
         operator: "eq"
         value: true
-        failure_message: "IBeam GBG non authentifié"
+        failure_message: "Gateway ibeamgbg:5000 non authentifiée"
       - field: "connected"
         operator: "eq"
         value: true
-        failure_message: "IBeam GBG déconnecté du broker"
-      - field: "account_accessible"
-        operator: "eq"
-        value: true
-        failure_message: "IBeam GBG: compte inaccessible"
+        failure_message: "Gateway ibeamgbg:5000 déconnectée du broker"
     headers:
       X-Internal-Key: "${INTERNAL_API_KEY}"
     alerting:
