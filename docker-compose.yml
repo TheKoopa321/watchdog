@@ -11,6 +11,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # Host metrics (CPU/RAM/disk) — read-only bind-mounts
       - /proc:/host-proc:ro
+      - /sys:/host-sys:ro
       - /:/host-rootfs:ro
     environment:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY}

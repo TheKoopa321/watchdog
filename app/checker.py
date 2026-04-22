@@ -251,6 +251,26 @@ def _apply_operator(operator: str, actual: Any, expected: Any) -> bool:
 
 # ── Host Metrics Check ─────────────────────────────────────────────────────────
 
+def _read_cpu_temp() -> float | None:
+    """Read CPU temperature. Tries psutil first, then /sys/class/thermal fallback."""
+    try:
+        import psutil
+        temps = psutil.sensors_temperatures()
+        for key in ("coretemp", "k10temp", "cpu_thermal", "acpitz"):
+            if key in temps and temps[key]:
+                return float(temps[key][0].current)
+    except (AttributeError, OSError, ImportError):
+        pass
+    # Fallback: read from bind-mounted host /sys or container /sys
+    for base in ("/host-sys", "/sys"):
+        try:
+            with open(f"{base}/class/thermal/thermal_zone0/temp") as f:
+                return int(f.read().strip()) / 1000.0
+        except (FileNotFoundError, ValueError, OSError):
+            continue
+    return None
+
+
 async def host_metrics_check(
     mounts: list[str] | None = None,
     cpu_warn: float = 80.0,
@@ -259,6 +279,8 @@ async def host_metrics_check(
     ram_crit: float = 95.0,
     disk_warn: float = 85.0,
     disk_crit: float = 95.0,
+    temp_warn: float | None = 75.0,
+    temp_crit: float | None = 90.0,
     name: str = "host_metrics",
 ) -> CheckResult:
     """Read host CPU / RAM / disk usage via psutil.
@@ -308,6 +330,14 @@ async def host_metrics_check(
             issues_warn.append(f"RAM {vm.percent:.1f}% ≥ {ram_warn}%")
     except Exception as e:
         issues_warn.append(f"RAM lecture échouée: {e}")
+
+    cpu_temp = _read_cpu_temp()
+    if cpu_temp is not None:
+        details["cpu_temp_celsius"] = round(cpu_temp, 1)
+        if temp_crit is not None and cpu_temp >= temp_crit:
+            issues_crit.append(f"CPU temp {cpu_temp:.1f}°C ≥ {temp_crit}°C")
+        elif temp_warn is not None and cpu_temp >= temp_warn:
+            issues_warn.append(f"CPU temp {cpu_temp:.1f}°C ≥ {temp_warn}°C")
 
     disk_results = []
     for mount in (mounts or ["/host-rootfs"]):

@@ -147,6 +147,8 @@ class HostMetricsCheck(BaseCheck):
     ram_crit: float = 95.0
     disk_warn: float = 85.0
     disk_crit: float = 95.0
+    temp_warn: float | None = 75.0
+    temp_crit: float | None = 90.0
 
 
 AnyCheck = HttpCheck | TcpCheck | DockerCheck | ApiCustomCheck | HostMetricsCheck

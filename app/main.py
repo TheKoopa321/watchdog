@@ -182,6 +182,7 @@ async def test_check(name: str):
             cpu_warn=check.cpu_warn, cpu_crit=check.cpu_crit,
             ram_warn=check.ram_warn, ram_crit=check.ram_crit,
             disk_warn=check.disk_warn, disk_crit=check.disk_crit,
+            temp_warn=check.temp_warn, temp_crit=check.temp_crit,
             name=check.name,
         )
     else:

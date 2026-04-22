@@ -362,6 +362,10 @@ checks:
     ram_crit: 95
     disk_warn: 85
     disk_crit: 95
+    # CPU temperature (°C). Mets à null pour désactiver si capteur absent.
+    # Nécessite bind-mount /sys:/host-sys:ro (déjà dans docker-compose.yml).
+    temp_warn: 75
+    temp_crit: 90
     alerting:
       consecutive_failures_before_alert: 3
       reminder_interval: 3600   # 1h — éviter le spam sur spike prolongé
