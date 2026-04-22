@@ -1,0 +1,304 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Watchdog — Configuration de surveillance de l'écosystème
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ce fichier est la seule interface de configuration du Watchdog.
+# Toutes les options sont documentées inline. Les valeurs par défaut sont
+# indiquées entre crochets [défaut: X].
+#
+# Redémarrez le container après modification :
+#   docker compose restart watchdog
+#
+# Les variables ${ENV_VAR} sont substituées depuis l'environnement au démarrage.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Paramètres globaux ────────────────────────────────────────────────────────
+
+global:
+  # Fuseau horaire pour les logs et alertes [défaut: America/Toronto]
+  timezone: "America/Toronto"
+
+  # Clé d'authentification interne (même que Budget/Global)
+  # Utilisée pour appeler les API internes de l'écosystème
+  internal_api_key: "${INTERNAL_API_KEY}"
+
+  # Intervalle par défaut entre les checks, en secondes [défaut: 60]
+  default_interval: 60
+
+  # Timeout par défaut pour les checks HTTP/TCP, en secondes [défaut: 10]
+  default_timeout: 10
+
+  # Nombre de checks à garder en historique par service [défaut: 1440]
+  # (1440 = 24h à 1 check/min — ajustez selon votre intervalle)
+  history_retention: 1440
+
+# ─── Canaux d'alerte ──────────────────────────────────────────────────────────
+
+alerting:
+  channels:
+    ntfy:
+      enabled: true
+      # URL du serveur ntfy (local ou cloud)
+      url: "http://10.1.1.117:8009"
+      # Topic ntfy où envoyer les alertes [défaut: watchdog]
+      topic: "watchdog"
+      # Priorité ntfy pour les alertes DOWN [défaut: high]
+      # Valeurs: min | low | default | high | urgent
+      priority: "high"
+      # Priorité ntfy pour les recoveries [défaut: default]
+      recovery_priority: "default"
+
+    email:
+      enabled: true
+      # SMTP via Proton Bridge (même config que l'email tool AgentHub)
+      smtp_host: "10.1.1.117"   # Adresse du host depuis Docker (pas 127.0.0.1)
+      smtp_port: 1025
+      smtp_user: "olivier@gagnonbourgault.com"
+      # Mot de passe Proton Bridge — TOUJOURS via variable d'environnement
+      smtp_password: "${PROTON_BRIDGE_PASSWORD}"
+      # Utiliser STARTTLS [défaut: true]
+      smtp_starttls: true
+      from_name: "Watchdog"
+      from_email: "olivier@gagnonbourgault.com"
+      # Destinataire des alertes
+      to: "olivier@gagnonbourgault.com"
+      # Envoyer un résumé quotidien à cette heure [défaut: null = désactivé]
+      # Format HH:MM en timezone locale
+      daily_summary_at: "08:00"
+
+    global_log:
+      enabled: true
+      # Endpoint Global pour journaliser les alertes dans le dashboard
+      url: "http://global:8443/api/logs/internal"
+      # Clé d'auth pour l'API Global (utilise la même que global)
+      api_key: "${INTERNAL_API_KEY}"
+
+  # ─── Paramètres anti-bruit (défauts globaux) ──────────────────────────────
+  # Ces valeurs s'appliquent à tous les checks sauf override per-check.
+
+  defaults:
+    # Nombre d'échecs consécutifs avant d'alerter [défaut: 3]
+    # Évite les faux positifs sur les micro-interruptions réseau
+    consecutive_failures_before_alert: 3
+
+    # Délai minimum entre deux alertes pour le même service, en secondes [défaut: 1800]
+    # (1800 = 30 minutes — évite le spam si un service clignote)
+    reminder_interval: 1800
+
+    # Notifier quand un service revient UP après un DOWN [défaut: true]
+    recovery_notify: true
+
+    # Cooldown après recovery avant de re-surveiller normalement, en secondes [défaut: 60]
+    recovery_cooldown: 60
+
+    # Plages horaires où les alertes sont supprimées
+    # Format: liste de {start, end, reason} en HH:MM timezone locale
+    # [défaut: vide = alertes 24/7]
+    quiet_hours: []
+    # Exemple:
+    # quiet_hours:
+    #   - start: "03:00"
+    #     end: "05:00"
+    #     reason: "Maintenance Docker cron"
+
+# ─── Checks ───────────────────────────────────────────────────────────────────
+# Types supportés: http, tcp, docker, api_custom
+#
+# Options communes à tous les types:
+#   name:     [obligatoire] Nom unique du check (utilisé dans les alertes)
+#   type:     [obligatoire] http | tcp | docker | api_custom
+#   interval: [défaut: global.default_interval] Secondes entre chaque check
+#   timeout:  [défaut: global.default_timeout] Secondes avant abandon
+#   alerting: [optionnel] Override des paramètres d'alerting globaux pour ce check
+#     consecutive_failures_before_alert: int
+#     reminder_interval: int
+#     recovery_notify: bool
+#     channels: [liste] ntfy | email | global_log — défaut: tous les canaux enabled
+#     quiet_hours: liste de {start, end, reason}
+
+checks:
+
+  # ── Services Web (HTTP) ────────────────────────────────────────────────────
+  # Type http: vérifie qu'un endpoint répond avec le bon status code
+  # Options:
+  #   url:             [obligatoire] URL à requêter
+  #   method:          [défaut: GET] Méthode HTTP
+  #   expected_status: [défaut: 200] Status code attendu
+  #   headers:         [optionnel] Headers HTTP additionnels
+  #   body_contains:   [optionnel] Chaîne qui doit être présente dans le body
+  #   latency_warn_ms: [optionnel] Latence au-delà de laquelle le check passe "degraded"
+
+  - name: "Global API"
+    type: http
+    url: "http://global:8443/health"
+    interval: 60
+    timeout: 10
+    expected_status: 200
+    alerting:
+      consecutive_failures_before_alert: 2   # Plus strict: service critique
+      channels: [ntfy, email, global_log]
+
+  - name: "Budget API"
+    type: http
+    url: "http://budget:8001/health"
+    interval: 60
+    timeout: 10
+    expected_status: 200
+    alerting:
+      consecutive_failures_before_alert: 2
+      channels: [ntfy, email, global_log]
+
+  - name: "AgentHub API"
+    type: http
+    url: "http://10.1.1.117:8100/health"
+    interval: 60
+    timeout: 10
+    expected_status: 200
+    alerting:
+      consecutive_failures_before_alert: 2
+      channels: [ntfy, email, global_log]
+
+  - name: "Portail GBG"
+    type: http
+    url: "http://portailgbg:8002/health"
+    interval: 120
+    timeout: 10
+    expected_status: 200
+
+  - name: "GardeManger"
+    type: http
+    url: "http://gardemanger:8003/health"
+    interval: 120
+    timeout: 10
+    expected_status: 200
+
+  # ── IBeam Gateways (API custom) ───────────────────────────────────────────
+  # Type api_custom: appelle un endpoint JSON et valide des conditions sur le body
+  # Options:
+  #   url:         [obligatoire] URL retournant du JSON
+  #   method:      [défaut: GET]
+  #   headers:     [optionnel] Headers HTTP
+  #   validations: [obligatoire] Liste de conditions à vérifier sur le JSON
+  #     field:           Chemin vers le champ (ex: "data.status", "authenticated")
+  #     operator:        eq | neq | contains | gt | lt | exists
+  #     value:           Valeur attendue
+  #     failure_message: Message d'erreur si la condition échoue
+
+  - name: "IBeam Gateway (Paper)"
+    type: api_custom
+    url: "http://budget:8001/api/investissement/ibeam-status"
+    interval: 120
+    timeout: 15
+    validations:
+      - field: "authenticated"
+        operator: "eq"
+        value: true
+        failure_message: "IBeam non authentifié"
+      - field: "connected"
+        operator: "eq"
+        value: true
+        failure_message: "IBeam déconnecté du broker"
+    headers:
+      X-Internal-Key: "${INTERNAL_API_KEY}"
+    alerting:
+      consecutive_failures_before_alert: 2
+      channels: [ntfy, email]
+
+  - name: "IBeam Gateway GBG"
+    type: api_custom
+    url: "http://budget:8001/api/investissement/ibeam-gbg-status"
+    interval: 120
+    timeout: 15
+    validations:
+      - field: "authenticated"
+        operator: "eq"
+        value: true
+        failure_message: "IBeam GBG non authentifié"
+      - field: "connected"
+        operator: "eq"
+        value: true
+        failure_message: "IBeam GBG déconnecté du broker"
+    headers:
+      X-Internal-Key: "${INTERNAL_API_KEY}"
+    alerting:
+      consecutive_failures_before_alert: 2
+      channels: [ntfy, email]
+
+  # ── Services réseau (TCP) ─────────────────────────────────────────────────
+  # Type tcp: vérifie qu'un port TCP est accessible
+  # Options:
+  #   host: [obligatoire] Hostname ou IP
+  #   port: [obligatoire] Port TCP
+
+  - name: "ntfy"
+    type: tcp
+    host: "10.1.1.117"
+    port: 8009
+    interval: 120
+    alerting:
+      # Si ntfy est down, on ne peut pas s'alerter via ntfy
+      channels: [email, global_log]
+
+  - name: "Synology NAS"
+    type: tcp
+    host: "10.1.1.69"
+    port: 5001
+    interval: 300
+    alerting:
+      channels: [ntfy, email]
+
+  - name: "Proton Bridge SMTP"
+    type: tcp
+    host: "10.1.1.117"   # Host address from Docker network
+    port: 1025
+    interval: 300
+    alerting:
+      # Si SMTP down, on ne peut pas envoyer d'email
+      channels: [ntfy, global_log]
+
+  # ── Containers Docker ──────────────────────────────────────────────────────
+  # Type docker: vérifie qu'un container est running + healthy
+  # Requiert le Docker socket monté en volume (read-only)
+  # Options:
+  #   container_name: [obligatoire] Nom exact du container Docker
+  #   check_health:   [défaut: true] Vérifie aussi le healthcheck Docker interne
+
+  - name: "IBeam Container"
+    type: docker
+    container_name: "ibeam"
+    interval: 120
+    check_health: true
+    alerting:
+      consecutive_failures_before_alert: 2
+      channels: [ntfy, email]
+
+  - name: "IBeam GBG Container"
+    type: docker
+    container_name: "ibeam-gbg"
+    interval: 120
+    check_health: true
+    alerting:
+      consecutive_failures_before_alert: 2
+      channels: [ntfy, email]
+
+  - name: "Global Container"
+    type: docker
+    container_name: "global"
+    interval: 120
+
+  - name: "Budget Container"
+    type: docker
+    container_name: "budget"
+    interval: 120
+
+  - name: "AgentHub Container"
+    type: docker
+    container_name: "agenthub"
+    interval: 120
+
+  - name: "Watchdog Container"
+    type: docker
+    container_name: "watchdog"
+    interval: 300
+    alerting:
+      # Si watchdog lui-même est en problème, escalader
+      channels: [ntfy, email]

@@ -1,0 +1,23 @@
+services:
+  watchdog:
+    build: .
+    container_name: watchdog
+    init: true
+    ports:
+      - "8200:8200"
+    volumes:
+      - ./config:/config:ro
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - PROTON_BRIDGE_PASSWORD=${PROTON_BRIDGE_PASSWORD}
+      - CONFIG_PATH=/config/checks.yaml
+    networks:
+      - ecosystem
+    restart: unless-stopped
+
+networks:
+  ecosystem:
+    external: true
+    name: ecosystem
