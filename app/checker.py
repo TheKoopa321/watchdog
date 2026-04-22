@@ -249,6 +249,109 @@ def _apply_operator(operator: str, actual: Any, expected: Any) -> bool:
     return False
 
 
+# ── Host Metrics Check ─────────────────────────────────────────────────────────
+
+async def host_metrics_check(
+    mounts: list[str] | None = None,
+    cpu_warn: float = 80.0,
+    cpu_crit: float = 95.0,
+    ram_warn: float = 85.0,
+    ram_crit: float = 95.0,
+    disk_warn: float = 85.0,
+    disk_crit: float = 95.0,
+    name: str = "host_metrics",
+) -> CheckResult:
+    """Read host CPU / RAM / disk usage via psutil.
+
+    When running in Docker, psutil reads the container's /proc unless PROCFS_PATH
+    is redirected to a bind-mounted host /proc. Set env var HOST_PROC or mount
+    host /proc to /host-proc in the container.
+    """
+    import os
+    try:
+        import psutil
+    except ImportError:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.UNKNOWN,
+            error="psutil not installed",
+            checked_at=_utcnow(),
+        )
+
+    # Redirect psutil to host procfs if bind-mounted
+    host_proc = os.environ.get("HOST_PROC", "")
+    if host_proc and os.path.isdir(host_proc):
+        psutil.PROCFS_PATH = host_proc
+
+    issues_warn: list[str] = []
+    issues_crit: list[str] = []
+    details: dict[str, Any] = {}
+
+    try:
+        cpu = psutil.cpu_percent(interval=0.5)
+        details["cpu_percent"] = round(cpu, 1)
+        if cpu >= cpu_crit:
+            issues_crit.append(f"CPU {cpu:.1f}% ≥ {cpu_crit}%")
+        elif cpu >= cpu_warn:
+            issues_warn.append(f"CPU {cpu:.1f}% ≥ {cpu_warn}%")
+    except Exception as e:
+        issues_warn.append(f"CPU lecture échouée: {e}")
+
+    try:
+        vm = psutil.virtual_memory()
+        details["ram_percent"] = round(vm.percent, 1)
+        details["ram_used_gb"] = round(vm.used / 1024**3, 2)
+        details["ram_total_gb"] = round(vm.total / 1024**3, 2)
+        if vm.percent >= ram_crit:
+            issues_crit.append(f"RAM {vm.percent:.1f}% ≥ {ram_crit}%")
+        elif vm.percent >= ram_warn:
+            issues_warn.append(f"RAM {vm.percent:.1f}% ≥ {ram_warn}%")
+    except Exception as e:
+        issues_warn.append(f"RAM lecture échouée: {e}")
+
+    disk_results = []
+    for mount in (mounts or ["/host-rootfs"]):
+        try:
+            usage = psutil.disk_usage(mount)
+            entry = {
+                "mount": mount,
+                "percent": round(usage.percent, 1),
+                "used_gb": round(usage.used / 1024**3, 2),
+                "total_gb": round(usage.total / 1024**3, 2),
+            }
+            disk_results.append(entry)
+            if usage.percent >= disk_crit:
+                issues_crit.append(f"Disque {mount} {usage.percent:.1f}% ≥ {disk_crit}%")
+            elif usage.percent >= disk_warn:
+                issues_warn.append(f"Disque {mount} {usage.percent:.1f}% ≥ {disk_warn}%")
+        except (FileNotFoundError, OSError) as e:
+            issues_warn.append(f"Disque {mount} lecture échouée: {e}")
+    details["disks"] = disk_results
+
+    if issues_crit:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.DOWN,
+            error="; ".join(issues_crit + issues_warn),
+            details=details,
+            checked_at=_utcnow(),
+        )
+    if issues_warn:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.DEGRADED,
+            error="; ".join(issues_warn),
+            details=details,
+            checked_at=_utcnow(),
+        )
+    return CheckResult(
+        name=name,
+        status=CheckStatus.UP,
+        details=details,
+        checked_at=_utcnow(),
+    )
+
+
 async def api_custom_check(
     url: str,
     validations: list[dict],

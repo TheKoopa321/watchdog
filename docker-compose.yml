@@ -9,10 +9,14 @@ services:
       - ./config:/config:ro
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Host metrics (CPU/RAM/disk) — read-only bind-mounts
+      - /proc:/host-proc:ro
+      - /:/host-rootfs:ro
     environment:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY}
       - PROTON_BRIDGE_PASSWORD=${PROTON_BRIDGE_PASSWORD}
       - CONFIG_PATH=/config/checks.yaml
+      - HOST_PROC=/host-proc
     networks:
       - ecosystem
     restart: unless-stopped

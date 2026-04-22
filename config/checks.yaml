@@ -171,6 +171,32 @@ checks:
     timeout: 10
     expected_status: 200
 
+  - name: "Relance"
+    type: http
+    url: "http://relance:8000/health"
+    interval: 120
+    timeout: 10
+    expected_status: 200
+
+  # Authelia expose /api/health (retourne 200 + {"status":"OK"} si sain)
+  - name: "Authelia (OIDC)"
+    type: http
+    url: "http://authelia:9091/api/health"
+    interval: 60
+    timeout: 10
+    expected_status: 200
+    alerting:
+      consecutive_failures_before_alert: 2  # Auth critique — plus strict
+      channels: [ntfy, email, global_log]
+
+  # Watchtower API HTTP — expose /v1/update (GET). Sans token il retourne 401
+  # mais c'est suffisant pour vérifier que le service écoute (via TCP).
+  - name: "Watchtower"
+    type: tcp
+    host: "watchtower"
+    port: 8080
+    interval: 300
+
   # ── IBeam Gateways (API custom) ───────────────────────────────────────────
   # Type api_custom: appelle un endpoint JSON et valide des conditions sur le body
   # Options:
@@ -313,3 +339,30 @@ checks:
     alerting:
       # Si watchdog lui-même est en problème, escalader
       channels: [ntfy, email]
+
+  # ── Host metrics (ubuntix) ─────────────────────────────────────────────────
+  # Type host_metrics: lit CPU/RAM/disque via psutil
+  # Nécessite les bind-mounts /proc:/host-proc:ro et /:/host-rootfs:ro
+  # (déjà configurés dans docker-compose.yml)
+  #
+  # Seuils:
+  #   *_warn: dépassé → statut DEGRADED (sans alerte bruyante)
+  #   *_crit: dépassé → statut DOWN (alerte)
+  # mounts: liste de points de montage à surveiller pour le disque
+  #   /host-rootfs = racine de l'hôte ubuntix
+
+  - name: "Host — ubuntix"
+    type: host_metrics
+    interval: 60
+    mounts:
+      - /host-rootfs
+    cpu_warn: 80
+    cpu_crit: 95
+    ram_warn: 85
+    ram_crit: 95
+    disk_warn: 85
+    disk_crit: 95
+    alerting:
+      consecutive_failures_before_alert: 3
+      reminder_interval: 3600   # 1h — éviter le spam sur spike prolongé
+      channels: [ntfy, email, global_log]

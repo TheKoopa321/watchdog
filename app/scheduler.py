@@ -8,9 +8,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .alerter import Alerter
-from .checker import http_check, tcp_check, docker_check, api_custom_check
+from .checker import http_check, tcp_check, docker_check, api_custom_check, host_metrics_check
 from .config import WatchdogConfig, effective_alerting
-from .config import HttpCheck, TcpCheck, DockerCheck, ApiCustomCheck, AnyCheck
+from .config import HttpCheck, TcpCheck, DockerCheck, ApiCustomCheck, HostMetricsCheck, AnyCheck
 from .models import AlertPayload, CheckResult, CheckState, CheckStatus
 
 logger = logging.getLogger(__name__)
@@ -137,6 +137,14 @@ class Scheduler:
                 method=check.method,
                 headers=check.headers,
                 timeout=timeout,
+                name=check.name,
+            )
+        elif isinstance(check, HostMetricsCheck):
+            return await host_metrics_check(
+                mounts=check.mounts,
+                cpu_warn=check.cpu_warn, cpu_crit=check.cpu_crit,
+                ram_warn=check.ram_warn, ram_crit=check.ram_crit,
+                disk_warn=check.disk_warn, disk_crit=check.disk_crit,
                 name=check.name,
             )
         else:

@@ -138,7 +138,18 @@ class ApiCustomCheck(BaseCheck):
     validations: list[Validation] = Field(default_factory=list)
 
 
-AnyCheck = HttpCheck | TcpCheck | DockerCheck | ApiCustomCheck
+class HostMetricsCheck(BaseCheck):
+    type: Literal["host_metrics"] = "host_metrics"
+    mounts: list[str] = Field(default_factory=lambda: ["/host-rootfs"])
+    cpu_warn: float = 80.0
+    cpu_crit: float = 95.0
+    ram_warn: float = 85.0
+    ram_crit: float = 95.0
+    disk_warn: float = 85.0
+    disk_crit: float = 95.0
+
+
+AnyCheck = HttpCheck | TcpCheck | DockerCheck | ApiCustomCheck | HostMetricsCheck
 
 
 class GlobalConfig(BaseModel):
@@ -179,6 +190,7 @@ def _parse_check(raw: dict) -> AnyCheck:
         "tcp": TcpCheck,
         "docker": DockerCheck,
         "api_custom": ApiCustomCheck,
+        "host_metrics": HostMetricsCheck,
     }
     cls = mapping.get(check_type)
     if cls is None:

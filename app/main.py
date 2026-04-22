@@ -9,8 +9,8 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .checker import http_check, tcp_check, docker_check, api_custom_check
-from .config import load_config, WatchdogConfig, HttpCheck, TcpCheck, DockerCheck, ApiCustomCheck
+from .checker import http_check, tcp_check, docker_check, api_custom_check, host_metrics_check
+from .config import load_config, WatchdogConfig, HttpCheck, TcpCheck, DockerCheck, ApiCustomCheck, HostMetricsCheck
 from .models import (
     CheckStatus,
     CheckSummary,
@@ -175,6 +175,14 @@ async def test_check(name: str):
         result = await api_custom_check(
             url=check.url, validations=[v.model_dump() for v in check.validations],
             method=check.method, headers=check.headers, timeout=timeout, name=check.name,
+        )
+    elif isinstance(check, HostMetricsCheck):
+        result = await host_metrics_check(
+            mounts=check.mounts,
+            cpu_warn=check.cpu_warn, cpu_crit=check.cpu_crit,
+            ram_warn=check.ram_warn, ram_crit=check.ram_crit,
+            disk_warn=check.disk_warn, disk_crit=check.disk_crit,
+            name=check.name,
         )
     else:
         raise HTTPException(status_code=400, detail="Unknown check type")
