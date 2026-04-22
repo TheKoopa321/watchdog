@@ -68,7 +68,7 @@ alerting:
     global_log:
       enabled: true
       # Endpoint Global pour journaliser les alertes dans le dashboard
-      url: "http://global:8443/api/logs/internal"
+      url: "http://global:8000/api/logs/internal"
       # Clé d'auth pour l'API Global (utilise la même que global)
       api_key: "${INTERNAL_API_KEY}"
 
@@ -129,7 +129,7 @@ checks:
 
   - name: "Global API"
     type: http
-    url: "http://global:8443/health"
+    url: "http://global:8000/health"
     interval: 60
     timeout: 10
     expected_status: 200
@@ -139,7 +139,7 @@ checks:
 
   - name: "Budget API"
     type: http
-    url: "http://budget:8001/health"
+    url: "http://budget:8000/health"
     interval: 60
     timeout: 10
     expected_status: 200
@@ -159,21 +159,21 @@ checks:
 
   - name: "Portail GBG"
     type: http
-    url: "http://portailgbg:8002/health"
+    url: "http://portailgbg:8000/health"
     interval: 120
     timeout: 10
     expected_status: 200
 
   - name: "GardeManger"
     type: http
-    url: "http://gardemanger:8003/health"
+    url: "http://garde-manger:8000/health"
     interval: 120
     timeout: 10
     expected_status: 200
 
   - name: "Relance"
     type: http
-    url: "http://relance:8000/health"
+    url: "http://relance:8000/health"  # port interne 8000 (exposé en 8007)
     interval: 120
     timeout: 10
     expected_status: 200
@@ -222,7 +222,7 @@ checks:
 
   - name: "IBeam Gateway (ibeam:5000)"
     type: api_custom
-    url: "http://budget:8001/api/ib/connections/4/status"
+    url: "http://budget:8000/api/ib/connections/4/status"
     interval: 120
     timeout: 15
     validations:
@@ -242,7 +242,7 @@ checks:
 
   - name: "IBeam Gateway GBG (ibeamgbg:5000)"
     type: api_custom
-    url: "http://budget:8001/api/ib/connections/8/status"
+    url: "http://budget:8000/api/ib/connections/8/status"
     interval: 120
     timeout: 15
     validations:
@@ -268,8 +268,8 @@ checks:
 
   - name: "ntfy"
     type: tcp
-    host: "10.1.1.117"
-    port: 8009
+    host: "ntfy"
+    port: 80
     interval: 120
     alerting:
       # Si ntfy est down, on ne peut pas s'alerter via ntfy
@@ -283,14 +283,17 @@ checks:
     alerting:
       channels: [ntfy, email]
 
-  - name: "Proton Bridge SMTP"
-    type: tcp
-    host: "10.1.1.117"   # Host address from Docker network
-    port: 1025
-    interval: 300
-    alerting:
-      # Si SMTP down, on ne peut pas envoyer d'email
-      channels: [ntfy, global_log]
+  # Proton Bridge bind typiquement sur 127.0.0.1 de l'hôte — inaccessible depuis un
+  # container sauf si on ajoute extra_hosts: "host.docker.internal:host-gateway".
+  # Désactivé tant que ce n'est pas configuré. Réactivable en ajoutant l'extra_hosts
+  # dans docker-compose.yml et en remettant host: "host.docker.internal".
+  # - name: "Proton Bridge SMTP"
+  #   type: tcp
+  #   host: "host.docker.internal"
+  #   port: 1025
+  #   interval: 300
+  #   alerting:
+  #     channels: [ntfy, global_log]  # Si SMTP down, on ne peut pas envoyer d'email
 
   # ── Containers Docker ──────────────────────────────────────────────────────
   # Type docker: vérifie qu'un container est running + healthy
@@ -310,7 +313,7 @@ checks:
 
   - name: "IBeam GBG Container"
     type: docker
-    container_name: "ibeam-gbg"
+    container_name: "ibeamgbg"
     interval: 120
     check_health: true
     alerting:
@@ -327,10 +330,7 @@ checks:
     container_name: "budget"
     interval: 120
 
-  - name: "AgentHub Container"
-    type: docker
-    container_name: "agenthub"
-    interval: 120
+  # AgentHub tourne sur PHANTEK (10.1.1.102), pas sur ubuntix — check via HTTP seulement
 
   - name: "Watchdog Container"
     type: docker
