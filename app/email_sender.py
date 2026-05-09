@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import smtplib
-import ssl
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -95,16 +94,14 @@ def send_email(
     msg["To"] = cfg.to
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-
     with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=30) as server:
+        server.ehlo()
         if cfg.smtp_starttls:
-            server.starttls(context=context)
+            server.starttls()
+            server.ehlo()
         if cfg.smtp_user and cfg.smtp_password:
             server.login(cfg.smtp_user, cfg.smtp_password)
-        server.sendmail(cfg.from_email, cfg.to, msg.as_string())
+        server.sendmail(cfg.from_email, [cfg.to], msg.as_string())
 
 
 def send_alert_down(
