@@ -46,13 +46,76 @@ class Scheduler:
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_check_results_name_time ON check_results(check_name, checked_at)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS check_state (
+                check_name TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'unknown',
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                last_alert_at TEXT,
+                down_since TEXT,
+                updated_at TEXT NOT NULL
+            )
+        """)
         conn.commit()
         conn.close()
 
+    def _load_saved_states(self) -> dict[str, dict]:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            rows = conn.execute(
+                "SELECT check_name, status, consecutive_failures, last_alert_at, down_since FROM check_state"
+            ).fetchall()
+            conn.close()
+            return {
+                row[0]: {
+                    "status": row[1],
+                    "consecutive_failures": row[2],
+                    "last_alert_at": row[3],
+                    "down_since": row[4],
+                }
+                for row in rows
+            }
+        except Exception as e:
+            logger.error(f"[db] Failed to load saved states: {e}")
+            return {}
+
+    def _save_state(self, state: CheckState) -> None:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("""
+                INSERT OR REPLACE INTO check_state
+                    (check_name, status, consecutive_failures, last_alert_at, down_since, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                state.name,
+                state.status.value,
+                state.consecutive_failures,
+                state.last_alert_at.isoformat() if state.last_alert_at else None,
+                state.down_since.isoformat() if state.down_since else None,
+                _utcnow().isoformat(),
+            ))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"[db] Failed to save state for '{state.name}': {e}")
+
     def _init_states(self) -> None:
+        saved = self._load_saved_states()
         retention = self.config.global_.history_retention
         for check in self.config.checks:
-            self._states[check.name] = CheckState(name=check.name)
+            s = saved.get(check.name)
+            if s:
+                state = CheckState(
+                    name=check.name,
+                    status=CheckStatus(s["status"]),
+                    consecutive_failures=s["consecutive_failures"],
+                    last_alert_at=datetime.fromisoformat(s["last_alert_at"]) if s["last_alert_at"] else None,
+                    down_since=datetime.fromisoformat(s["down_since"]) if s["down_since"] else None,
+                )
+                logger.info(f"[scheduler] Restored state for '{check.name}': {state.status.value}, {state.consecutive_failures} failures")
+            else:
+                state = CheckState(name=check.name)
+            self._states[check.name] = state
             self._history[check.name] = deque(maxlen=retention)
 
     def _persist_result(self, result: CheckResult) -> None:
@@ -204,6 +267,8 @@ class Scheduler:
             await self.alerter.dispatch(check, state, payload)
             if state.consecutive_failures >= effective_alerting(check, self.config).consecutive_failures_before_alert:
                 state.last_alert_at = _utcnow()
+
+        self._save_state(state)
 
     async def _check_loop(self, check: AnyCheck) -> None:
         interval = check.interval or self.config.global_.default_interval

@@ -178,6 +178,26 @@ checks:
     timeout: 10
     expected_status: 200
 
+  - name: "Surveillance"
+    type: http
+    url: "http://surveillance:8000/health"
+    interval: 60
+    timeout: 10
+    expected_status: 200
+
+  - name: "CRM"
+    type: tcp
+    host: "crm"
+    port: 8000
+    interval: 120
+
+  - name: "Immich (Souvenirs)"
+    type: http
+    url: "http://immich-server:2283/api/server/ping"
+    interval: 120
+    timeout: 15
+    expected_status: 200
+
   # Authelia expose /api/health (retourne 200 + {"status":"OK"} si sain)
   - name: "Authelia (OIDC)"
     type: http
