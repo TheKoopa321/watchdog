@@ -1,17 +1,19 @@
-"""Tests for app.alerter — plan #292."""
+"""Tests for app.alerter — plan #292, plan #299."""
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.alerter import Alerter, _safe_header
+from app.alerter import Alerter, _safe_header, _should_alert
 from app.config import (
     AlertingChannels,
     AlertingConfig,
     AlertingDefaults,
+    EffectiveAlerting,
     EmailChannel,
     NtfyChannel,
+    QuietHour,
     WatchdogConfig,
 )
 from app.models import AlertPayload, CheckState, CheckStatus
@@ -112,6 +114,50 @@ def test_ntfy_header_ascii_safe_in_dispatch():
     assert "Title" in posted_headers, "ntfy was not called"
     # Must be pure ASCII — encode would raise UnicodeEncodeError otherwise
     posted_headers["Title"].encode("ascii")
+
+
+def _make_eff(recovery_notify: bool = True, recovery_cooldown: int = 60) -> EffectiveAlerting:
+    """Build a minimal EffectiveAlerting for _should_alert unit tests."""
+    return EffectiveAlerting(
+        consecutive_failures_before_alert=1,
+        reminder_interval=0,
+        recovery_notify=recovery_notify,
+        recovery_cooldown=recovery_cooldown,
+        channels=["ntfy"],
+        quiet_hours=[],
+    )
+
+
+# ── Recovery cooldown tests ────────────────────────────────────────────────────
+
+def test_recovery_cooldown_allows_first_send():
+    """First recovery (last_recovery_at=None) is always dispatched."""
+    state = CheckState(name="svc", status=CheckStatus.UP, last_recovery_at=None)
+    eff = _make_eff(recovery_notify=True, recovery_cooldown=60)
+    assert _should_alert(state, eff, is_recovery=True) is True
+
+
+def test_recovery_cooldown_suppresses_within_window():
+    """Recovery within the cooldown window is suppressed (prevents flapping spam)."""
+    recent = datetime.now(timezone.utc) - timedelta(seconds=10)  # 10s ago, cooldown=60
+    state = CheckState(name="svc", status=CheckStatus.UP, last_recovery_at=recent)
+    eff = _make_eff(recovery_notify=True, recovery_cooldown=60)
+    assert _should_alert(state, eff, is_recovery=True) is False
+
+
+def test_recovery_cooldown_reallows_after_expiry():
+    """Recovery after the cooldown window has elapsed is dispatched again."""
+    old = datetime.now(timezone.utc) - timedelta(seconds=120)  # 2 min ago, cooldown=60
+    state = CheckState(name="svc", status=CheckStatus.UP, last_recovery_at=old)
+    eff = _make_eff(recovery_notify=True, recovery_cooldown=60)
+    assert _should_alert(state, eff, is_recovery=True) is True
+
+
+def test_recovery_notify_false_blocks_regardless_of_cooldown():
+    """recovery_notify=False blocks all recovery alerts even with fresh last_recovery_at."""
+    state = CheckState(name="svc", status=CheckStatus.UP, last_recovery_at=None)
+    eff = _make_eff(recovery_notify=False, recovery_cooldown=60)
+    assert _should_alert(state, eff, is_recovery=True) is False
 
 
 def test_smtp_failure_does_not_block_ntfy():

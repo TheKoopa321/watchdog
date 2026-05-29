@@ -35,6 +35,7 @@ class CheckState(BaseModel):
     consecutive_failures: int = 0
     consecutive_successes: int = 0
     last_alert_at: datetime | None = None
+    last_recovery_at: datetime | None = None
     last_success_at: datetime | None = None
     last_failure_at: datetime | None = None
     down_since: datetime | None = None
