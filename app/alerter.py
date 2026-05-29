@@ -18,6 +18,10 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _safe_header(value: str) -> str:
+    return value.encode("ascii", "replace").decode("ascii")
+
+
 def _in_quiet_hours(quiet_hours: list, local_now: datetime) -> tuple[bool, str]:
     """Check if current local time falls in any quiet window."""
     current_t = local_now.time().replace(second=0, microsecond=0)
@@ -104,12 +108,12 @@ class Alerter:
             return
 
         if is_recovery:
-            title = f"RECOVERED — {name}"
+            title = f"RECOVERED - {name}"
             message = f"Service rétabli"
             priority = ntfy.recovery_priority
             tags = "white_check_mark"
         else:
-            title = f"DOWN — {name}"
+            title = f"DOWN - {name}"
             message = payload.error or "Service indisponible"
             if payload.consecutive_failures > 1:
                 message += f" ({payload.consecutive_failures} échecs consécutifs)"
@@ -122,9 +126,9 @@ class Alerter:
                     f"{ntfy.url}/{ntfy.topic}",
                     content=message,
                     headers={
-                        "Title": title,
-                        "Priority": priority,
-                        "Tags": tags,
+                        "Title": _safe_header(title),
+                        "Priority": _safe_header(priority),
+                        "Tags": _safe_header(tags),
                     },
                 )
         except Exception as e:
