@@ -56,6 +56,10 @@ class Scheduler:
                 updated_at TEXT NOT NULL
             )
         """)
+        # Idempotent migration: add last_recovery_at column for existing DBs
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(check_state)").fetchall()}
+        if "last_recovery_at" not in existing_cols:
+            conn.execute("ALTER TABLE check_state ADD COLUMN last_recovery_at TEXT")
         conn.commit()
         conn.close()
 
@@ -63,7 +67,7 @@ class Scheduler:
         try:
             conn = sqlite3.connect(self.db_path)
             rows = conn.execute(
-                "SELECT check_name, status, consecutive_failures, last_alert_at, down_since FROM check_state"
+                "SELECT check_name, status, consecutive_failures, last_alert_at, down_since, last_recovery_at FROM check_state"
             ).fetchall()
             conn.close()
             return {
@@ -72,6 +76,7 @@ class Scheduler:
                     "consecutive_failures": row[2],
                     "last_alert_at": row[3],
                     "down_since": row[4],
+                    "last_recovery_at": row[5],
                 }
                 for row in rows
             }
@@ -84,14 +89,15 @@ class Scheduler:
             conn = sqlite3.connect(self.db_path)
             conn.execute("""
                 INSERT OR REPLACE INTO check_state
-                    (check_name, status, consecutive_failures, last_alert_at, down_since, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (check_name, status, consecutive_failures, last_alert_at, down_since, last_recovery_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 state.name,
                 state.status.value,
                 state.consecutive_failures,
                 state.last_alert_at.isoformat() if state.last_alert_at else None,
                 state.down_since.isoformat() if state.down_since else None,
+                state.last_recovery_at.isoformat() if state.last_recovery_at else None,
                 _utcnow().isoformat(),
             ))
             conn.commit()
@@ -111,6 +117,7 @@ class Scheduler:
                     consecutive_failures=s["consecutive_failures"],
                     last_alert_at=datetime.fromisoformat(s["last_alert_at"]) if s["last_alert_at"] else None,
                     down_since=datetime.fromisoformat(s["down_since"]) if s["down_since"] else None,
+                    last_recovery_at=datetime.fromisoformat(s["last_recovery_at"]) if s.get("last_recovery_at") else None,
                 )
                 logger.info(f"[scheduler] Restored state for '{check.name}': {state.status.value}, {state.consecutive_failures} failures")
             else:
@@ -253,7 +260,9 @@ class Scheduler:
             )
             state.down_since = None
             state.last_alert_at = _utcnow()
-            await self.alerter.dispatch(check, state, payload)
+            sent = await self.alerter.dispatch(check, state, payload)
+            if sent:
+                state.last_recovery_at = _utcnow()
         elif result.status != CheckStatus.UP:
             payload = AlertPayload(
                 check_name=check.name,

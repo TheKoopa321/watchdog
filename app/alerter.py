@@ -49,7 +49,13 @@ def _should_alert(
     now = _utcnow()
 
     if is_recovery:
-        return eff.recovery_notify
+        if not eff.recovery_notify:
+            return False
+        if state.last_recovery_at is not None:
+            elapsed = (now - state.last_recovery_at).total_seconds()
+            if elapsed < eff.recovery_cooldown:
+                return False
+        return True
 
     if state.consecutive_failures < eff.consecutive_failures_before_alert:
         return False
@@ -71,7 +77,8 @@ class Alerter:
         check: AnyCheck,
         state: CheckState,
         payload: AlertPayload,
-    ) -> None:
+    ) -> bool:
+        """Dispatch alert. Returns True if alert was sent, False if suppressed."""
         eff = effective_alerting(check, self.config)
         is_recovery = payload.status == CheckStatus.UP and payload.previous_status in (
             CheckStatus.DOWN,
@@ -79,7 +86,7 @@ class Alerter:
         )
 
         if not _should_alert(state, eff, is_recovery):
-            return
+            return False
 
         # Check quiet hours (using UTC for now — TODO: convert to local tz if needed)
         in_quiet, reason = _in_quiet_hours(eff.quiet_hours, _utcnow())
@@ -101,6 +108,7 @@ class Alerter:
         for channel, result in zip(channels, results):
             if isinstance(result, Exception):
                 logger.error(f"[alerter] {channel} failed for '{check.name}': {result}")
+        return True
 
     async def _send_ntfy(self, name: str, payload: AlertPayload, is_recovery: bool) -> None:
         ntfy = self.config.alerting.channels.ntfy
