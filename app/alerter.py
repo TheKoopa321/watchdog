@@ -92,7 +92,7 @@ class Alerter:
         in_quiet, reason = _in_quiet_hours(eff.quiet_hours, _utcnow())
         if in_quiet and not is_recovery:
             logger.info(f"[alerter] Quiet hours active for '{check.name}': {reason}")
-            return
+            return False
 
         channels = eff.channels
         tasks = []

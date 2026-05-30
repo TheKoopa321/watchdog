@@ -56,10 +56,12 @@ class Scheduler:
                 updated_at TEXT NOT NULL
             )
         """)
-        # Idempotent migration: add last_recovery_at column for existing DBs
+        # Idempotent migrations for existing DBs
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(check_state)").fetchall()}
         if "last_recovery_at" not in existing_cols:
             conn.execute("ALTER TABLE check_state ADD COLUMN last_recovery_at TEXT")
+        if "down_alert_sent" not in existing_cols:
+            conn.execute("ALTER TABLE check_state ADD COLUMN down_alert_sent INTEGER DEFAULT 0")
         conn.commit()
         conn.close()
 
@@ -67,7 +69,7 @@ class Scheduler:
         try:
             conn = sqlite3.connect(self.db_path)
             rows = conn.execute(
-                "SELECT check_name, status, consecutive_failures, last_alert_at, down_since, last_recovery_at FROM check_state"
+                "SELECT check_name, status, consecutive_failures, last_alert_at, down_since, last_recovery_at, down_alert_sent FROM check_state"
             ).fetchall()
             conn.close()
             return {
@@ -77,6 +79,7 @@ class Scheduler:
                     "last_alert_at": row[3],
                     "down_since": row[4],
                     "last_recovery_at": row[5],
+                    "down_alert_sent": row[6],
                 }
                 for row in rows
             }
@@ -89,8 +92,8 @@ class Scheduler:
             conn = sqlite3.connect(self.db_path)
             conn.execute("""
                 INSERT OR REPLACE INTO check_state
-                    (check_name, status, consecutive_failures, last_alert_at, down_since, last_recovery_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (check_name, status, consecutive_failures, last_alert_at, down_since, last_recovery_at, down_alert_sent, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 state.name,
                 state.status.value,
@@ -98,6 +101,7 @@ class Scheduler:
                 state.last_alert_at.isoformat() if state.last_alert_at else None,
                 state.down_since.isoformat() if state.down_since else None,
                 state.last_recovery_at.isoformat() if state.last_recovery_at else None,
+                int(state.down_alert_sent),
                 _utcnow().isoformat(),
             ))
             conn.commit()
@@ -118,6 +122,7 @@ class Scheduler:
                     last_alert_at=datetime.fromisoformat(s["last_alert_at"]) if s["last_alert_at"] else None,
                     down_since=datetime.fromisoformat(s["down_since"]) if s["down_since"] else None,
                     last_recovery_at=datetime.fromisoformat(s["last_recovery_at"]) if s.get("last_recovery_at") else None,
+                    down_alert_sent=bool(s.get("down_alert_sent", 0)),
                 )
                 logger.info(f"[scheduler] Restored state for '{check.name}': {state.status.value}, {state.consecutive_failures} failures")
             else:
@@ -252,17 +257,21 @@ class Scheduler:
         # Alerting
         is_recovery = result.status == CheckStatus.UP and previous_status in (CheckStatus.DOWN, CheckStatus.DEGRADED)
         if is_recovery:
-            payload = AlertPayload(
-                check_name=check.name,
-                status=result.status,
-                previous_status=previous_status,
-                down_since=state.down_since,
-            )
+            # Only send RECOVERED if a DOWN alert was actually dispatched for this incident
+            if state.down_alert_sent:
+                payload = AlertPayload(
+                    check_name=check.name,
+                    status=result.status,
+                    previous_status=previous_status,
+                    down_since=state.down_since,
+                )
+                state.last_alert_at = _utcnow()
+                sent = await self.alerter.dispatch(check, state, payload)
+                if sent:
+                    state.last_recovery_at = _utcnow()
+            # Always reset incident state at recovery, whether we alerted or not
             state.down_since = None
-            state.last_alert_at = _utcnow()
-            sent = await self.alerter.dispatch(check, state, payload)
-            if sent:
-                state.last_recovery_at = _utcnow()
+            state.down_alert_sent = False
         elif result.status != CheckStatus.UP:
             payload = AlertPayload(
                 check_name=check.name,
@@ -273,8 +282,9 @@ class Scheduler:
                 consecutive_failures=state.consecutive_failures,
                 latency_ms=result.latency_ms,
             )
-            await self.alerter.dispatch(check, state, payload)
-            if state.consecutive_failures >= effective_alerting(check, self.config).consecutive_failures_before_alert:
+            sent = await self.alerter.dispatch(check, state, payload)
+            if sent:
+                state.down_alert_sent = True
                 state.last_alert_at = _utcnow()
 
         self._save_state(state)

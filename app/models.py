@@ -39,6 +39,7 @@ class CheckState(BaseModel):
     last_success_at: datetime | None = None
     last_failure_at: datetime | None = None
     down_since: datetime | None = None
+    down_alert_sent: bool = False
     last_error: str | None = None
     last_latency_ms: float | None = None
     uptime_24h: float | None = None  # percentage
