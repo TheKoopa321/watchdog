@@ -66,7 +66,7 @@ alerting:
       daily_summary_at: "08:00"
 
     global_log:
-      enabled: true
+      enabled: false
       # Endpoint Global pour journaliser les alertes dans le dashboard
       url: "http://global:8000/api/logs/internal"
       # Clé d'auth pour l'API Global (utilise la même que global)
