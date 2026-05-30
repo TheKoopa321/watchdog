@@ -1,4 +1,4 @@
-"""Tests for app.alerter — plan #292, plan #299."""
+"""Tests for app.alerter — plan #292, plan #299, plan #324."""
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +16,7 @@ from app.config import (
     QuietHour,
     WatchdogConfig,
 )
-from app.models import AlertPayload, CheckState, CheckStatus
+from app.models import AlertPayload, CheckResult, CheckState, CheckStatus
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -158,6 +158,89 @@ def test_recovery_notify_false_blocks_regardless_of_cooldown():
     state = CheckState(name="svc", status=CheckStatus.UP, last_recovery_at=None)
     eff = _make_eff(recovery_notify=False, recovery_cooldown=60)
     assert _should_alert(state, eff, is_recovery=True) is False
+
+
+# ── DOWN/RECOVERED symmetry tests (plan #324) ──────────────────────────────
+
+def _make_scheduler(db_path: str, consecutive_failures_before_alert: int = 1):
+    """Build a minimal Scheduler with one 'svc' check."""
+    from app.scheduler import Scheduler
+    from app.config import HttpCheck, CheckAlerting
+
+    ntfy = NtfyChannel(enabled=True, url="http://ntfy.local", topic="test")
+    email = EmailChannel(enabled=False, smtp_host="127.0.0.1", smtp_port=1025)
+    channels = AlertingChannels(ntfy=ntfy, email=email)
+    alerting = AlertingConfig(
+        channels=channels,
+        defaults=AlertingDefaults(
+            consecutive_failures_before_alert=consecutive_failures_before_alert,
+            reminder_interval=0,
+            recovery_notify=True,
+        ),
+    )
+    check = HttpCheck(name="svc", type="http", url="http://example.com", alerting=CheckAlerting())
+    config = WatchdogConfig(checks=[check], alerting=alerting)
+    return Scheduler(config, db_path=db_path)
+
+
+def test_recovered_not_sent_when_no_down_alert_dispatched(tmp_path):
+    """RECOVERED is NOT dispatched when no DOWN alert was actually sent (sub-threshold blip)."""
+    from app.scheduler import Scheduler
+    from app.config import HttpCheck, CheckAlerting
+
+    scheduler = _make_scheduler(str(tmp_path / "watchdog.db"), consecutive_failures_before_alert=3)
+    check = scheduler.config.checks[0]
+
+    dispatch_calls = []
+
+    async def fake_dispatch(c, s, p):
+        dispatch_calls.append(p.status.value)
+        return False  # Suppressed (sub-threshold) — DOWN not actually sent
+
+    scheduler.alerter.dispatch = fake_dispatch
+
+    async def run():
+        # 1 failure — dispatch called but returns False (sub-threshold)
+        await scheduler._process_result(check, CheckResult(name="svc", status=CheckStatus.DOWN, error="timeout"))
+        # Recovery — should NOT trigger a RECOVERED dispatch
+        await scheduler._process_result(check, CheckResult(name="svc", status=CheckStatus.UP))
+
+    asyncio.run(run())
+
+    # dispatch called once for DOWN (returned False), never for RECOVERED
+    assert len(dispatch_calls) == 1, f"Expected 1 dispatch call, got {dispatch_calls}"
+    assert dispatch_calls[0] == "down"
+    assert scheduler._states["svc"].down_alert_sent is False
+    assert scheduler._states["svc"].down_since is None
+
+
+def test_recovered_sent_after_down_alert_dispatched(tmp_path):
+    """RECOVERED is dispatched when a DOWN alert was actually sent (threshold reached)."""
+    scheduler = _make_scheduler(str(tmp_path / "watchdog.db"), consecutive_failures_before_alert=1)
+    check = scheduler.config.checks[0]
+
+    dispatch_calls = []
+
+    async def fake_dispatch(c, s, p):
+        dispatch_calls.append(p.status.value)
+        return True  # DOWN sent successfully
+
+    scheduler.alerter.dispatch = fake_dispatch
+
+    async def run():
+        # 1 failure — threshold=1, dispatch returns True → down_alert_sent=True
+        await scheduler._process_result(check, CheckResult(name="svc", status=CheckStatus.DOWN, error="timeout"))
+        # Recovery — should trigger RECOVERED dispatch
+        await scheduler._process_result(check, CheckResult(name="svc", status=CheckStatus.UP))
+
+    asyncio.run(run())
+
+    assert len(dispatch_calls) == 2, f"Expected 2 dispatch calls, got {dispatch_calls}"
+    assert dispatch_calls[0] == "down"
+    assert dispatch_calls[1] == "up"
+    # State cleaned up after recovery
+    assert scheduler._states["svc"].down_alert_sent is False
+    assert scheduler._states["svc"].down_since is None
 
 
 def test_smtp_failure_does_not_block_ntfy():
