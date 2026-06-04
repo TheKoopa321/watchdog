@@ -80,9 +80,9 @@ alerting:
     # Évite les faux positifs sur les micro-interruptions réseau
     consecutive_failures_before_alert: 3
 
-    # Délai minimum entre deux alertes pour le même service, en secondes [défaut: 1800]
-    # (1800 = 30 minutes — évite le spam si un service clignote)
-    reminder_interval: 1800
+    # Délai minimum entre deux alertes pour le même service, en secondes [défaut: 43200]
+    # (43200 = 12 heures — un seul rappel par demi-journée si le service reste DOWN)
+    reminder_interval: 43200
 
     # Notifier quand un service revient UP après un DOWN [défaut: true]
     recovery_notify: true
