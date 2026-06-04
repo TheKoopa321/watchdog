@@ -75,6 +75,7 @@ class QuietHour(BaseModel):
 class AlertingDefaults(BaseModel):
     consecutive_failures_before_alert: int = 3
     reminder_interval: int = 1800
+    reminder_disabled: bool = False
     recovery_notify: bool = True
     recovery_cooldown: int = 60
     quiet_hours: list[QuietHour] = Field(default_factory=list)
@@ -88,6 +89,7 @@ class AlertingConfig(BaseModel):
 class CheckAlerting(BaseModel):
     consecutive_failures_before_alert: int | None = None
     reminder_interval: int | None = None
+    reminder_disabled: bool | None = None
     recovery_notify: bool | None = None
     channels: list[Literal["ntfy", "email", "global_log"]] | None = None
     quiet_hours: list[QuietHour] | None = None
