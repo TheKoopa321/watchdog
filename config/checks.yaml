@@ -350,6 +350,16 @@ checks:
     container_name: "budget"
     interval: 120
 
+  - name: "Stalwart Container"
+    type: docker
+    container_name: "stalwart"
+    interval: 120
+
+  - name: "Bulwark Container"
+    type: docker
+    container_name: "bulwark"
+    interval: 120
+
   # AgentHub tourne sur PHANTEK (10.1.1.102), pas sur ubuntix — check via HTTP seulement
 
   - name: "Watchdog Container"
